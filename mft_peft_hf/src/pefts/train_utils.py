@@ -20,6 +20,7 @@ import transformers
 import numpy as np
 import psutil
 import torch
+import wandb
 from torch import nn
 from tqdm.auto import tqdm
 sys.path.append("..")
@@ -83,8 +84,11 @@ class TorchTracemalloc:
 
 
 def accelerate_train(accelerator, model, train_dataloader, valid_dataloader, optimizer, lr_scheduler, num_update_steps_per_epoch, total_train_dataset_size, args):
-    # tensorboard writer
-    summary_writer = SummaryWriter(log_dir=args.tb_dir)
+    # set up writer for tensorboard / wandb
+    if args.tb_dir.startswith("wandb"):
+        writer = wandb.init(args.tb_dir)
+    else:
+        writer = SummaryWriter(log_dir=args.tb_dir)
     # Train!
     total_batch_size = args.per_device_train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
     logger.info("**************************************** Running training ****************************************")
@@ -223,8 +227,11 @@ def accelerate_train(accelerator, model, train_dataloader, valid_dataloader, opt
                                train_log_dict[f"{ID2TASK[i]}_train_loss"] = train_task_loss[i]
                             # accelerator.log(train_log_dict, step=completed_steps)
                             if accelerator.is_main_process:
-                                for key, value in train_log_dict.items():
-                                    summary_writer.add_scalar(f'{key}', value, completed_steps)
+                                if args.tb_dir.startswith("wandb"):
+                                    writer.log(train_log_dict, step=completed_steps)
+                                else:
+                                    for key, value in train_log_dict.items():
+                                        writer.add_scalar(f'{key}', value, completed_steps)
                             # summary_writer.close()
                             # accelerator.print(optimizer)
                             reduce_loss = 0
@@ -319,8 +326,11 @@ def accelerate_train(accelerator, model, train_dataloader, valid_dataloader, opt
                                 eval_log_dict[f"{ID2TASK[i]}_valid_loss"] = eval_task_loss[i]
                             # accelerator.log(eval_log_dict, step=completed_steps)
                             if accelerator.is_main_process:
-                                for key, value in eval_log_dict.items():
-                                    summary_writer.add_scalar(f'{key}', value, completed_steps)
+                                if args.tb_dir.startswith("wandb"):
+                                    writer.log(eval_log_dict, step=completed_steps)
+                                else:
+                                    for key, value in eval_log_dict.items():
+                                        writer.add_scalar(f'{key}', value, completed_steps)
 
                             model.train()
                             if args.early_stopping and stall_num == args.early_stopping_stall_num:
@@ -370,7 +380,10 @@ def accelerate_train(accelerator, model, train_dataloader, valid_dataloader, opt
 
     # end training if accelerator.init_trackers()
     # accelerator.end_training()
-    summary_writer.close()
+    if args.tb_dir.startswith("wandb"):
+        wandb.finish()
+    else:
+        writer.close()
 
     # final save
     accelerator.wait_for_everyone()
